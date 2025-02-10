@@ -19,6 +19,7 @@ use solana_sdk::{
 use std::env;
 use std::error::Error;
 use std::str::FromStr;
+use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -202,8 +203,11 @@ async fn process_interaction(
                 if let Ok(recent_blockhash) =
                     rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig::confirmed())
                 {
+                    let compute_budget_instruction = ComputeBudgetInstruction::set_compute_unit_limit(300_000);
+                    let priority_fee_instruction = ComputeBudgetInstruction::set_compute_unit_price(1_000_000);
+
                     let transaction = Transaction::new_signed_with_payer(
-                        &[callback_instruction],
+                        &[compute_budget_instruction, priority_fee_instruction, callback_instruction],
                         Some(&payer.pubkey()),
                         &[&payer],
                         recent_blockhash.0,
