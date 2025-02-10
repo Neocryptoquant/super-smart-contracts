@@ -5,9 +5,12 @@ use anchor_lang::solana_program::program::invoke_signed;
 
 declare_id!("LLMrieZMpbJFwN52WgmBNMxYojrpRVYXdC1RCweEbab");
 
+const ORACLE_IDENTITY: Pubkey = pubkey!("A1ooMmN1fz6LbEFrjh6GukFS2ZeRYFzdyFjeafyyS7Ca");
+
 #[program]
 pub mod solana_gpt_oracle {
     use super::*;
+
 
     pub fn initialize(_ctx: Context<Initialize>) -> Result<()> {
         Ok(())
@@ -170,7 +173,7 @@ pub struct InteractWithLlm<'info> {
 
 #[derive(Accounts)]
 pub struct CallbackFromLlm<'info> {
-    #[account(mut)]
+    #[account(mut, address = ORACLE_IDENTITY)] // TODO: check for a specific key
     pub payer: Signer<'info>,
     #[account(seeds = [b"identity"], bump)]
     pub identity: Account<'info, Identity>,
