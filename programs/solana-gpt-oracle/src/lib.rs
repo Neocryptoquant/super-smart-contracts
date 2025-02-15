@@ -2,15 +2,17 @@ use anchor_lang::prelude::ProgramError;
 use anchor_lang::prelude::*;
 use anchor_lang::solana_program::instruction::Instruction;
 use anchor_lang::solana_program::program::invoke_signed;
+use ephemeral_rollups_sdk::anchor::{delegate, ephemeral};
+use ephemeral_rollups_sdk::cpi::DelegateConfig;
 
 declare_id!("LLMrieZMpbJFwN52WgmBNMxYojrpRVYXdC1RCweEbab");
 
 const ORACLE_IDENTITY: Pubkey = pubkey!("A1ooMmN1fz6LbEFrjh6GukFS2ZeRYFzdyFjeafyyS7Ca");
 
+#[ephemeral]
 #[program]
 pub mod solana_gpt_oracle {
     use super::*;
-
 
     pub fn initialize(_ctx: Context<Initialize>) -> Result<()> {
         Ok(())
@@ -31,12 +33,73 @@ pub mod solana_gpt_oracle {
         account_metas: Option<Vec<AccountMeta>>,
     ) -> Result<()> {
         let interaction = &mut ctx.accounts.interaction;
+        let current_len = interaction.to_account_info().data_len();
+        let space = Interaction::space(&text, account_metas.as_ref().map_or(0, |m| m.len()));
+        let rent = Rent::get()?;
+
+        let mut additional_rent = rent.minimum_balance(space);
+
+        let interaction_info = interaction.to_account_info();
+        let payer_info = ctx.accounts.payer.to_account_info();
+        let system_program_info = ctx.accounts.system_program.to_account_info();
+
+        if interaction_info.owner.eq(&anchor_lang::system_program::ID) {
+            let create_instruction =
+                anchor_lang::solana_program::system_instruction::create_account(
+                    &ctx.accounts.payer.key(),
+                    &interaction.key(),
+                    additional_rent,
+                    space as u64,
+                    &crate::ID,
+                );
+
+            let payer = ctx.accounts.payer.key();
+            let context_account = ctx.accounts.context_account.key();
+            let signer_seeds: &[&[&[u8]]] = &[&[
+                Interaction::seed(),
+                payer.as_ref(),
+                context_account.as_ref(),
+                &[ctx.bumps.interaction],
+            ]];
+
+            anchor_lang::solana_program::program::invoke_signed(
+                &create_instruction,
+                &[
+                    payer_info.clone(),
+                    interaction_info.clone(),
+                    system_program_info.clone(),
+                ],
+                signer_seeds,
+            )?;
+        } else {
+            additional_rent = additional_rent.saturating_sub(rent.minimum_balance(current_len));
+            interaction_info.realloc(space, false)?;
+            if additional_rent > 0 {
+                let cpi_context = CpiContext::new(
+                    system_program_info,
+                    anchor_lang::system_program::Transfer {
+                        from: payer_info.clone(),
+                        to: interaction_info.clone(),
+                    },
+                );
+                anchor_lang::system_program::transfer(cpi_context, additional_rent)?;
+            }
+        }
+
+        let mut interaction_data = interaction.try_borrow_mut_data()?;
+        let mut interaction =
+            Interaction::try_deserialize_unchecked(&mut interaction_data.as_ref())
+                .unwrap_or_default();
+
         interaction.context = ctx.accounts.context_account.key();
         interaction.user = ctx.accounts.payer.key();
         interaction.text = text;
         interaction.callback_program_id = callback_program_id;
         interaction.callback_discriminator = callback_discriminator;
         interaction.callback_account_metas = account_metas.unwrap_or_default();
+        interaction.is_processed = false;
+
+        interaction.try_serialize(&mut interaction_data.as_mut())?;
         Ok(())
     }
 
@@ -80,6 +143,9 @@ pub mod solana_gpt_oracle {
             return Err(ProgramError::InvalidAccountData.into());
         }
 
+        // Set processed flag
+        ctx.accounts.interaction.is_processed = true;
+
         // CPI to the callback program
         let instruction = Instruction {
             program_id: ctx.accounts.program.key(),
@@ -103,6 +169,19 @@ pub mod solana_gpt_oracle {
             return Err(ProgramError::InvalidAccountData.into());
         }
         msg!("Callback response: {:?}", response);
+        Ok(())
+    }
+
+    pub fn delegate_interaction(ctx: Context<DelegateInteraction>) -> Result<()> {
+        ctx.accounts.delegate_interaction(
+            &ctx.accounts.payer,
+            &[
+                Interaction::seed(),
+                &ctx.accounts.payer.key().to_bytes(),
+                &ctx.accounts.context_account.key().to_bytes(),
+            ],
+            DelegateConfig::default(),
+        )?;
         Ok(())
     }
 }
@@ -158,14 +237,13 @@ pub struct CreateLlmContext<'info> {
 pub struct InteractWithLlm<'info> {
     #[account(mut)]
     pub payer: Signer<'info>,
+    /// CHECK: the correct interaction account
     #[account(
-        init,
-        payer = payer,
-        space = 120 + text.as_bytes().len() + account_metas.as_ref().map_or(0, |m| m.len()) * AccountMeta::size(),
+        mut,
         seeds = [Interaction::seed(), payer.key().as_ref(), context_account.key().as_ref()],
         bump
     )]
-    pub interaction: Account<'info, Interaction>,
+    pub interaction: AccountInfo<'info>,
     /// CHECK: we accept any context
     pub context_account: Account<'info, ContextAccount>,
     pub system_program: Program<'info, System>,
@@ -173,12 +251,12 @@ pub struct InteractWithLlm<'info> {
 
 #[derive(Accounts)]
 pub struct CallbackFromLlm<'info> {
-    #[account(mut, address = ORACLE_IDENTITY)] // TODO: check for a specific key
+    #[account(mut, address = ORACLE_IDENTITY)]
     pub payer: Signer<'info>,
     #[account(seeds = [b"identity"], bump)]
     pub identity: Account<'info, Identity>,
     /// CHECK: we accept any context
-    #[account(mut, close = payer)]
+    #[account(mut)]
     pub interaction: Account<'info, Interaction>,
     /// CHECK: the callback program
     pub program: AccountInfo<'info>,
@@ -190,6 +268,22 @@ pub struct CallbackFromOracle<'info> {
     pub identity: Account<'info, Identity>,
 }
 
+#[delegate]
+#[derive(Accounts)]
+pub struct DelegateInteraction<'info> {
+    #[account(mut)]
+    pub payer: Signer<'info>,
+    /// CHECK: the correct interaction account
+    #[account(
+        mut, del,
+        seeds = [Interaction::seed(), payer.key().as_ref(), context_account.key().as_ref()],
+        bump
+    )]
+    pub interaction: AccountInfo<'info>,
+    /// CHECK: we accept any context
+    pub context_account: Account<'info, ContextAccount>,
+}
+
 /// Accounts
 
 #[account]
@@ -199,12 +293,12 @@ pub struct ContextAccount {
 
 impl ContextAccount {
     pub fn seed() -> &'static [u8] {
-        b"context"
+        b"test-context"
     }
 }
 
 #[account]
-#[derive(Debug)]
+#[derive(Default, Debug)]
 pub struct Interaction {
     pub context: Pubkey,
     pub user: Pubkey,
@@ -212,11 +306,16 @@ pub struct Interaction {
     pub callback_program_id: Pubkey,
     pub callback_discriminator: [u8; 8],
     pub callback_account_metas: Vec<AccountMeta>,
+    pub is_processed: bool,
 }
 
 impl Interaction {
     pub fn seed() -> &'static [u8] {
         b"interaction"
+    }
+
+    pub fn space(text: &String, account_metas_len: usize) -> usize {
+        121 + text.as_bytes().len() + account_metas_len * AccountMeta::size()
     }
 }
 

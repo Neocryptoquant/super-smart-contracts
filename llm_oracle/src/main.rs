@@ -9,6 +9,7 @@ use solana_account_decoder::UiAccountEncoding;
 use solana_client::pubsub_client::PubsubClient;
 use solana_client::rpc_client::RpcClient;
 use solana_client::rpc_config::{RpcAccountInfoConfig, RpcProgramAccountsConfig};
+use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use solana_sdk::{
     commitment_config::CommitmentConfig,
     instruction::Instruction,
@@ -19,7 +20,6 @@ use solana_sdk::{
 use std::env;
 use std::error::Error;
 use std::str::FromStr;
-use solana_sdk::compute_budget::ComputeBudgetInstruction;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
@@ -33,14 +33,30 @@ async fn main() -> Result<(), Box<dyn Error>> {
     println!(" RPC: {:?}", rpc_url.as_str());
     println!(" WS: {:?}", websocket_url.as_str());
     loop {
-        if let Err(e) = run_oracle(rpc_url.as_str(), websocket_url.as_str(), open_api_key.as_str(), &payer, &identity_pda, &mut interaction_memory).await {
+        if let Err(e) = run_oracle(
+            rpc_url.as_str(),
+            websocket_url.as_str(),
+            open_api_key.as_str(),
+            &payer,
+            &identity_pda,
+            &mut interaction_memory,
+        )
+        .await
+        {
             eprintln!("Error encountered: {:?}. Restarting...", e);
             tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         }
     }
 }
 
-async fn run_oracle(rpc_url: &str, websocket_url: &str, open_api_key: &str, payer: &Keypair, identity_pda: &Pubkey, interaction_memory: &mut InteractionMemory) -> Result<(), Box<dyn Error>> {
+async fn run_oracle(
+    rpc_url: &str,
+    websocket_url: &str,
+    open_api_key: &str,
+    payer: &Keypair,
+    identity_pda: &Pubkey,
+    interaction_memory: &mut InteractionMemory,
+) -> Result<(), Box<dyn Error>> {
     let open_ai_client = ChatGPT::new_with_config(
         open_api_key,
         ModelConfiguration {
@@ -79,7 +95,7 @@ async fn run_oracle(rpc_url: &str, websocket_url: &str, open_api_key: &str, paye
         &open_ai_client,
         interaction_memory,
     )
-        .await?;
+    .await?;
 
     let program_config = RpcProgramAccountsConfig {
         account_config: rpc_config,
@@ -114,7 +130,7 @@ async fn run_oracle(rpc_url: &str, websocket_url: &str, open_api_key: &str, paye
                     data,
                     interaction_memory,
                 )
-                    .await?;
+                .await?;
             }
         }
     }
@@ -135,6 +151,10 @@ async fn process_interaction(
     if let Ok(interaction) =
         solana_gpt_oracle::Interaction::try_deserialize_unchecked(&mut data.as_slice())
     {
+        if interaction.is_processed == true {
+            return Ok(());
+        }
+        println!("Processing interaction: {:?}", interaction_pubkey);
         if let Ok(context_data) = rpc_client.get_account(&interaction.context) {
             if let Ok(context) = solana_gpt_oracle::ContextAccount::try_deserialize_unchecked(
                 &mut context_data.data.as_slice(),
@@ -203,11 +223,17 @@ async fn process_interaction(
                 if let Ok(recent_blockhash) =
                     rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig::confirmed())
                 {
-                    let compute_budget_instruction = ComputeBudgetInstruction::set_compute_unit_limit(300_000);
-                    let priority_fee_instruction = ComputeBudgetInstruction::set_compute_unit_price(1_000_000);
+                    let compute_budget_instruction =
+                        ComputeBudgetInstruction::set_compute_unit_limit(300_000);
+                    let priority_fee_instruction =
+                        ComputeBudgetInstruction::set_compute_unit_price(1_000_000);
 
                     let transaction = Transaction::new_signed_with_payer(
-                        &[compute_budget_instruction, priority_fee_instruction, callback_instruction],
+                        &[
+                            compute_budget_instruction,
+                            priority_fee_instruction,
+                            callback_instruction,
+                        ],
                         Some(&payer.pubkey()),
                         &[&payer],
                         recent_blockhash.0,
@@ -251,7 +277,6 @@ async fn fetch_and_process_program_accounts(
         rpc_client.get_program_accounts_with_config(&solana_gpt_oracle::ID, program_config)?;
 
     for (pubkey, account) in accounts {
-        println!("Processing interaction: {:?}", pubkey);
         process_interaction(
             payer,
             identity_pda,
