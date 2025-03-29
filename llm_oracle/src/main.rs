@@ -2,7 +2,7 @@ use anchor_lang::prelude::AccountMeta;
 use anchor_lang::{AccountDeserialize, AnchorSerialize, Discriminator};
 use chatgpt::client::ChatGPT;
 use chatgpt::config::ModelConfiguration;
-use chatgpt::types::{ChatMessage, CompletionResponse, Role};
+use chatgpt::types::{ChatMessage, Role};
 use futures::StreamExt;
 use memory::InteractionMemory;
 use solana_account_decoder::UiAccountEncoding;
@@ -25,10 +25,13 @@ use tokio_stream::wrappers::ReceiverStream;
 
 mod memory;
 
+const MAX_TX_RETRY_ATTEMPTS: u8 = 5;
+const MAX_API_RETRY_ATTEMPTS: u8 = 3;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let (rpc_url, websocket_url, open_api_key, payer, identity_pda) = load_config();
-    let mut interaction_memory = InteractionMemory::new(20);
+    let mut interaction_memory = InteractionMemory::new(10);
     println!(" Oracle identity: {:?}", payer.pubkey());
     println!(" RPC: {:?}", rpc_url.as_str());
     println!(" WS: {:?}", websocket_url.as_str());
@@ -44,7 +47,6 @@ async fn main() -> Result<(), Box<dyn Error>> {
         .await
         {
             eprintln!("Error encountered: {:?}. Restarting...", e);
-            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
         }
     }
 }
@@ -82,7 +84,7 @@ async fn run_oracle(
         solana_client::rpc_filter::Memcmp::new(
             0,
             solana_client::rpc_filter::MemcmpEncodedBytes::Bytes(
-                solana_gpt_oracle::Interaction::discriminator().to_vec(),
+                solana_gpt_oracle::Interaction::DISCRIMINATOR.to_vec(),
             ),
         ),
     )];
@@ -181,18 +183,41 @@ async fn process_interaction(
                         context.text, interaction.text
                     ),
                 });
-                let response: CompletionResponse =
-                    open_ai_client.send_history(&previous_history).await?;
-                let response = response.message().content.clone();
+                let mut api_attempts = 0;
+                let mut response_content = String::new();
+                while api_attempts < MAX_API_RETRY_ATTEMPTS {
+                    match open_ai_client.send_history(&previous_history).await {
+                        Ok(response) => {
+                            response_content = response.message().content.clone();
+                            break;
+                        }
+                        Err(e) => {
+                            api_attempts += 1;
+                            previous_history = previous_history
+                                .iter()
+                                .skip((api_attempts * 2) as usize)
+                                .cloned()
+                                .collect();
+                            eprintln!(
+                                "API call failed (attempt {}/{}): {:?}",
+                                api_attempts, MAX_API_RETRY_ATTEMPTS, e
+                            );
+                            if api_attempts >= MAX_API_RETRY_ATTEMPTS {
+                                return Err(Box::new(e));
+                            }
+                        }
+                    }
+                }
+
                 interaction_memory.add_interaction(
                     interaction_pubkey,
-                    response.clone(),
+                    response_content.clone(),
                     Role::System,
                 );
 
                 let response_data = [
-                    solana_gpt_oracle::instruction::CallbackFromLlm::discriminator().to_vec(),
-                    response.try_to_vec()?,
+                    solana_gpt_oracle::instruction::CallbackFromLlm::DISCRIMINATOR.to_vec(),
+                    response_content.try_to_vec()?,
                 ]
                 .concat();
 
@@ -220,30 +245,37 @@ async fn process_interaction(
                 callback_instruction.accounts.extend(remaining_accounts);
 
                 // Send the response with the callback transaction
-                if let Ok(recent_blockhash) =
-                    rpc_client.get_latest_blockhash_with_commitment(CommitmentConfig::confirmed())
-                {
-                    let compute_budget_instruction =
-                        ComputeBudgetInstruction::set_compute_unit_limit(300_000);
-                    let priority_fee_instruction =
-                        ComputeBudgetInstruction::set_compute_unit_price(1_000_000);
+                let mut attempts = 0;
+                while attempts < MAX_TX_RETRY_ATTEMPTS {
+                    if let Ok(recent_blockhash) = rpc_client
+                        .get_latest_blockhash_with_commitment(CommitmentConfig::processed())
+                    {
+                        let compute_budget_instruction =
+                            ComputeBudgetInstruction::set_compute_unit_limit(300_000);
+                        let priority_fee_instruction =
+                            ComputeBudgetInstruction::set_compute_unit_price(1_000_000);
 
-                    let transaction = Transaction::new_signed_with_payer(
-                        &[
-                            compute_budget_instruction,
-                            priority_fee_instruction,
-                            callback_instruction,
-                        ],
-                        Some(&payer.pubkey()),
-                        &[&payer],
-                        recent_blockhash.0,
-                    );
+                        let transaction = Transaction::new_signed_with_payer(
+                            &[
+                                compute_budget_instruction,
+                                priority_fee_instruction,
+                                callback_instruction.clone(),
+                            ],
+                            Some(&payer.pubkey()),
+                            &[&payer],
+                            recent_blockhash.0,
+                        );
 
-                    match rpc_client.send_and_confirm_transaction(&transaction) {
-                        Ok(signature) => {
-                            println!("Transaction signature: {}\n", signature)
+                        match rpc_client.send_and_confirm_transaction(&transaction) {
+                            Ok(signature) => {
+                                println!("Transaction signature: {}\n", signature);
+                                break;
+                            }
+                            Err(e) => {
+                                attempts += 1;
+                                eprintln!("Failed to send transaction: {:?}\n", e)
+                            }
                         }
-                        Err(e) => eprintln!("Failed to send transaction: {:?}\n", e),
                     }
                 }
             }

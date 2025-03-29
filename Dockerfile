@@ -12,6 +12,8 @@ FROM debian:bullseye-slim
 WORKDIR /app
 RUN apt-get update && apt-get install -y ca-certificates libssl1.1 && rm -rf /var/lib/apt/lists/*
 
+
+
 COPY --from=builder /app/target/release/llm_oracle /app/llm_oracle
 
 CMD ["./llm_oracle"]

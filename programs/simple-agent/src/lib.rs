@@ -36,13 +36,10 @@ pub mod simple_agent {
             system_program: ctx.accounts.system_program.to_account_info(),
         };
         let cpi_ctx = CpiContext::new(cpi_program, cpi_accounts);
-        solana_gpt_oracle::cpi::interact_with_llm(
-            cpi_ctx,
-            text,
-            crate::ID,
-            crate::instruction::CallbackFromAgent::discriminator(),
-            None,
-        )?;
+        let disc: [u8; 8] = instruction::CallbackFromAgent::DISCRIMINATOR
+            .try_into()
+            .expect("Discriminator must be 8 bytes");
+        solana_gpt_oracle::cpi::interact_with_llm(cpi_ctx, text, ID, disc, None)?;
 
         Ok(())
     }
