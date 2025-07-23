@@ -1,6 +1,6 @@
 [package]
 name = "solana-gpt-oracle"
-version = "0.1.0"
+version = "0.1.1"
 license = "MIT"
 description = "Solana LLM Oracle"
 edition = "2021"
@@ -18,5 +18,5 @@ no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build"]
 
 [dependencies]
-anchor-lang = { version = "0.31.0", features = ["init-if-needed"] }
-ephemeral-rollups-sdk = { version = "0.2.4", features = ["anchor"] }
+anchor-lang = { version = "^0", features = ["init-if-needed"] }
+ephemeral-rollups-sdk = { version = "^0", features = ["anchor"] }

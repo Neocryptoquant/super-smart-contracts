@@ -1,6 +1,6 @@
 [package]
 name = "agent-minter"
-version = "0.1.0"
+version = "0.1.1"
 description = "Created with Anchor"
 edition = "2021"
 
@@ -17,7 +17,7 @@ no-log-ix-name = []
 idl-build = ["anchor-lang/idl-build", "anchor-spl/idl-build"]
 
 [dependencies]
-anchor-lang = { version = "0.31.0", features = ["init-if-needed"] }
-anchor-spl = { version = "0.31.0", features = ["metadata"] }
-serde_json = "1.0.133"
+anchor-lang = { version = "^0", features = ["init-if-needed"] }
+anchor-spl = { version = "^0", features = ["metadata"] }
+serde_json = "^1"
 solana-gpt-oracle = { path = "../solana-gpt-oracle", features = ["cpi"] }
