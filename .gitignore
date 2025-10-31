@@ -6,3 +6,8 @@ target
 node_modules
 test-ledger
 .yarn
+
+# Environment variables (API keys, secrets)
+.env
+.env.local
+**/.env

@@ -1,11 +1,11 @@
 # Super Smart Contract
 
-Super Smart Contracts are Smart Contracts enhanced by AI. They can interact with users, learn from them, and adapt to their needs. This repository provides a simple example of a Super Smart Contract using OpenAI API to respond to queries.
+Super Smart Contracts are Smart Contracts enhanced by AI. They can interact with users, learn from them, and adapt to their needs. This repository provides a simple example of a Super Smart Contract using AI APIs (OpenAI or Google Gemini) to respond to queries.
 
 
 ## This repository provides:
 
-1. An oracle using OpenAI API to respond to queries
+1. An oracle supporting **multiple AI providers** (OpenAI GPT-4o or Google Gemini 2.0)
 2. A smart contract which serves as an interface to the oracle: LLMrieZMpbJFwN52WgmBNMxYojrpRVYXdC1RCweEbab
 3. Two example of agents definitions:
    - A [simple agent](./programs/simple-agent) which queries the oracle and logs the response
@@ -92,10 +92,109 @@ To build the programs, run:
 anchor build
 ```
 
-### Running test 
+### Setting up the LLM Oracle Server
 
-To run the tests, run:
+The LLM Oracle server is an off-chain service that monitors the blockchain for interaction requests and responds using AI APIs.
 
+#### Prerequisites
+
+1. **Choose your AI Provider** - You need an API key from either:
+   - **Google Gemini** (recommended): Get your free API key at [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
+   - **OpenAI**: Get your API key at [https://platform.openai.com/api-keys](https://platform.openai.com/api-keys)
+
+2. **Configure the Oracle**
+
+Create a `.env` file in the `llm_oracle/` directory:
+
+```bash
+cd llm_oracle
+cp .env.example .env  # If example doesn't exist, create .env manually
+```
+
+Edit `.env` with your API key:
+
+```bash
+# For Gemini (recommended - free tier available)
+GEMINI_API_KEY=your-gemini-api-key-here
+
+# OR for OpenAI
+OPENAI_API_KEY=your-openai-api-key-here
+
+# Solana RPC Configuration (optional, defaults to localhost)
+RPC_URL=http://localhost:8899
+WEBSOCKET_URL=ws://localhost:8900
+
+# Oracle Identity (optional, uses test keypair by default)
+# IDENTITY=your-base58-encoded-keypair-string
+```
+
+> **Note**: If both API keys are provided, Gemini takes priority. The oracle will automatically detect which key is available.
+
+3. **Build the Oracle Server**
+
+```bash
+cd llm_oracle
+cargo build --release
+```
+
+4. **Run the Oracle Server**
+
+Start a local Solana validator (in a separate terminal):
+```bash
+solana-test-validator
+```
+
+Then run the oracle:
+```bash
+cd llm_oracle
+cargo run --release
+```
+
+You should see output indicating which AI provider is being used:
+```
+🤖 Using Gemini AI (gemini-2.0-flash)
+Oracle identity: tEsT3eV6RFCWs1BZ7AXTzasHqTtMnMLCB2tjQ42TDXD
+RPC: "http://localhost:8899"
+WS: "ws://localhost:8900"
+```
+
+#### Production Deployment
+
+For production deployment:
+
+1. **Generate a dedicated oracle keypair** (don't use the test key):
+   ```bash
+   solana-keygen new --outfile oracle-keypair.json
+   ```
+
+2. **Fund the oracle identity** with SOL for transaction fees:
+   ```bash
+   solana transfer <ORACLE_PUBKEY> 1 --allow-unfunded-recipient
+   ```
+
+3. **Set the IDENTITY environment variable**:
+   ```bash
+   export IDENTITY=$(solana-keygen pubkey oracle-keypair.json | base58)
+   ```
+
+4. **Deploy using Docker** (see `Dockerfile` and `fly.toml` for deployment examples)
+
+### Running tests
+
+To run the tests with the oracle server:
+
+**Terminal 1** - Start the oracle server:
+```bash
+cd llm_oracle
+cargo run --release
+```
+
+**Terminal 2** - Run the tests:
+```bash
+anchor test --skip-local-validator
+```
+
+To run tests without the oracle (basic functionality only):
 ```bash
 anchor test
 ```

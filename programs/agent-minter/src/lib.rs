@@ -12,7 +12,7 @@ use {
     },
 };
 
-declare_id!("agnmDKzZkv63sRhPFvm3iWpxaopgTRcohXA6CSYSXvQ");
+declare_id!("CUQaZKCFjP4EefD3RpCV6oiZtTozWT8k5Q75CrYpAU4S");
 
 #[program]
 pub mod agent_minter {

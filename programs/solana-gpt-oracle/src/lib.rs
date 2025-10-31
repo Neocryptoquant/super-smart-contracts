@@ -5,9 +5,9 @@ use anchor_lang::solana_program::program::invoke_signed;
 use ephemeral_rollups_sdk::anchor::{delegate, ephemeral};
 use ephemeral_rollups_sdk::cpi::DelegateConfig;
 
-declare_id!("LLMrieZMpbJFwN52WgmBNMxYojrpRVYXdC1RCweEbab");
+declare_id!("KumM927g39X6ERsnuvJHXHKYxEY8dPLSRgVcvokNyXX");
 
-const ORACLE_IDENTITY: Pubkey = pubkey!("A1ooMmN1fz6LbEFrjh6GukFS2ZeRYFzdyFjeafyyS7Ca");
+const ORACLE_IDENTITY: Pubkey = pubkey!("tEsT3eV6RFCWs1BZ7AXTzasHqTtMnMLCB2tjQ42TDXD");
 
 #[ephemeral]
 #[program]

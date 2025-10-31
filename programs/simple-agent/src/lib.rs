@@ -2,7 +2,7 @@ use anchor_lang::prelude::*;
 use anchor_lang::Discriminator;
 use solana_gpt_oracle::{ContextAccount, Counter, Identity};
 
-declare_id!("totswYsj7osGRWccCqCureH28QR8igxrJPXjFgKoRmr");
+declare_id!("5TmXnjZfC1gfcjyJPDNcRuLsmgWj3hj9X56xj9J5iGDR");
 
 #[program]
 pub mod simple_agent {
